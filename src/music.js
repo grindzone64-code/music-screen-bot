@@ -8,27 +8,14 @@ import {
   StreamType,
 } from "@discordjs/voice";
 import youtubeDl from "youtube-dl-exec";
-import { writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as joinPath } from "node:path";
+import { config } from "./env.js";
 
 const queues = new Map();
 const MAX_HISTORY = 50;
-
-// YouTube blocks datacenter IPs unless requests carry cookies. Paste a Netscape-format
-// cookies.txt into the YOUTUBE_COOKIES variable (or point YOUTUBE_COOKIES_FILE at one).
-function resolveCookiesFile() {
-  if (process.env.YOUTUBE_COOKIES_FILE) return process.env.YOUTUBE_COOKIES_FILE;
-  const text = process.env.YOUTUBE_COOKIES;
-  if (!text) return undefined;
-  const file = joinPath(tmpdir(), "yt-cookies.txt");
-  writeFileSync(file, text.replace(/\\n/g, "\n"), { mode: 0o600 });
-  return file;
-}
-const COOKIES_FILE = resolveCookiesFile();
+let stateListener = null;
 
 const YT_FLAGS = {
-  ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
+  ...(config.ytCookiesFile ? { cookies: config.ytCookiesFile } : {}),
   noWarnings: true,
   noCheckCertificates: true,
   noPlaylist: true,
@@ -40,6 +27,18 @@ const YT_FLAGS = {
   userAgent:
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
+
+export function onStateChange(fn) {
+  stateListener = fn;
+}
+
+function notify(guildId) {
+  if (stateListener) {
+    Promise.resolve(stateListener(guildId)).catch((err) => {
+      console.error(`[music] state listener: ${err.message}`);
+    });
+  }
+}
 
 function killChild(q) {
   if (q.lastChild && !q.lastChild.killed) {
@@ -67,6 +66,7 @@ function getQueue(guildId) {
     tracks: [],
     history: [],
     nowPlaying: null,
+    lastTrack: null,
     loop: "off",
     volume: 1,
     connection: null,
@@ -129,6 +129,7 @@ async function resolveTrack(query, requestedBy) {
 
   return {
     title: info.title ?? "unknown",
+    author: info.uploader ?? info.channel ?? info.artist ?? null,
     url: info.webpage_url ?? info.original_url ?? info.url,
     duration: info.duration ?? 0,
     thumbnail: info.thumbnail ?? null,
@@ -159,7 +160,9 @@ function advance(guildId) {
   }
 
   if (!nextTrack) {
+    if (q.nowPlaying) q.lastTrack = q.nowPlaying;
     q.nowPlaying = null;
+    notify(guildId);
     return;
   }
 
@@ -184,6 +187,7 @@ function advance(guildId) {
 
   resource.volume?.setVolume(q.volume);
   q.nowPlaying = nextTrack;
+  q.lastTrack = nextTrack;
   q.lastChild = child;
 
   const st = q.player.state.status;
@@ -192,6 +196,7 @@ function advance(guildId) {
   }
 
   q.player.play(resource);
+  notify(guildId);
 }
 
 function triggerNext(q, guildId) {
@@ -219,6 +224,8 @@ export async function play(guild, voiceChannel, query, requestedBy, { next = fal
 
   if (q.player.state.status === AudioPlayerStatus.Idle) {
     advance(guild.id);
+  } else {
+    notify(guild.id);
   }
 
   return { track, position: next ? 1 : q.tracks.length, playingNow: q.nowPlaying === track };
@@ -250,35 +257,56 @@ export function previous(guildId) {
 
 export function replay(guildId) {
   const q = queues.get(guildId);
-  if (!q?.nowPlaying) return null;
+  const target = q?.nowPlaying ?? q?.lastTrack;
+  if (!q || !target) return null;
 
-  const current = q.nowPlaying;
-  q.tracks.unshift(current);
+  q.tracks.unshift(target);
   q.nowPlaying = null;
   q.skipping = true;
   triggerNext(q, guildId);
-  return current;
+  return target;
 }
 
 export function stop(guildId) {
   const q = queues.get(guildId);
   if (!q) return false;
   const hadActivity = Boolean(q.nowPlaying || q.tracks.length);
+  if (q.nowPlaying) q.lastTrack = q.nowPlaying;
   q.tracks.length = 0;
   q.nowPlaying = null;
   killChild(q);
   if (q.player.state.status !== AudioPlayerStatus.Idle) {
     q.player.stop(true);
+  } else if (hadActivity) {
+    notify(guildId);
   }
   return hadActivity;
 }
 
 export function pause(guildId) {
-  return queues.get(guildId)?.player.pause(true) ?? false;
+  const ok = queues.get(guildId)?.player.pause(true) ?? false;
+  if (ok) notify(guildId);
+  return ok;
 }
 
 export function resume(guildId) {
-  return queues.get(guildId)?.player.unpause() ?? false;
+  const ok = queues.get(guildId)?.player.unpause() ?? false;
+  if (ok) notify(guildId);
+  return ok;
+}
+
+export function togglePause(guildId) {
+  const q = queues.get(guildId);
+  if (!q?.nowPlaying) return null;
+  const st = q.player.state.status;
+  if (st === AudioPlayerStatus.Paused || st === AudioPlayerStatus.AutoPaused) {
+    q.player.unpause();
+    notify(guildId);
+    return false;
+  }
+  q.player.pause(true);
+  notify(guildId);
+  return true;
 }
 
 export function setVolume(guildId, percent) {
@@ -288,6 +316,7 @@ export function setVolume(guildId, percent) {
   q.volume = clamped / 100;
   const resource = q.player.state.resource;
   resource?.volume?.setVolume(q.volume);
+  notify(guildId);
   return clamped;
 }
 
@@ -296,7 +325,18 @@ export function setLoop(guildId, mode) {
   if (!q) return null;
   if (!["off", "track", "queue"].includes(mode)) return null;
   q.loop = mode;
+  notify(guildId);
   return mode;
+}
+
+export function cycleLoop(guildId) {
+  const q = queues.get(guildId);
+  if (!q) return null;
+  const order = ["off", "track", "queue"];
+  const nextMode = order[(order.indexOf(q.loop) + 1) % order.length];
+  q.loop = nextMode;
+  notify(guildId);
+  return nextMode;
 }
 
 export function shuffle(guildId) {
@@ -306,13 +346,16 @@ export function shuffle(guildId) {
     const j = Math.floor(Math.random() * (i + 1));
     [q.tracks[i], q.tracks[j]] = [q.tracks[j], q.tracks[i]];
   }
+  notify(guildId);
   return q.tracks.length;
 }
 
 export function removeTrack(guildId, position) {
   const q = queues.get(guildId);
   if (!q || position < 1 || position > q.tracks.length) return null;
-  return q.tracks.splice(position - 1, 1)[0];
+  const removed = q.tracks.splice(position - 1, 1)[0];
+  notify(guildId);
+  return removed;
 }
 
 export function moveTrack(guildId, from, to) {
@@ -322,6 +365,7 @@ export function moveTrack(guildId, from, to) {
   }
   const [track] = q.tracks.splice(from - 1, 1);
   q.tracks.splice(to - 1, 0, track);
+  notify(guildId);
   return track;
 }
 
@@ -330,6 +374,7 @@ export function clearQueue(guildId) {
   if (!q) return 0;
   const count = q.tracks.length;
   q.tracks.length = 0;
+  if (count) notify(guildId);
   return count;
 }
 
@@ -338,10 +383,12 @@ export function leave(guildId) {
   connection?.destroy();
   const q = queues.get(guildId);
   if (q) {
+    if (q.nowPlaying) q.lastTrack = q.nowPlaying;
     q.tracks.length = 0;
     q.nowPlaying = null;
     q.player.stop(true);
     killChild(q);
+    notify(guildId);
     queues.delete(guildId);
   }
   return Boolean(connection || q);
@@ -354,6 +401,7 @@ export function status(guildId) {
   const elapsedMs = "playbackDuration" in state ? state.playbackDuration : 0;
   return {
     nowPlaying: q.nowPlaying,
+    lastTrack: q.lastTrack,
     tracks: [...q.tracks],
     queued: q.tracks.length,
     historyCount: q.history.length,
@@ -362,5 +410,27 @@ export function status(guildId) {
     paused: state.status === AudioPlayerStatus.Paused || state.status === AudioPlayerStatus.AutoPaused,
     elapsedSeconds: Math.floor(elapsedMs / 1000),
     channelId: q.connection?.joinConfig?.channelId ?? null,
+    ended: false,
+  };
+}
+
+export function playerSnapshot(guildId) {
+  const active = status(guildId);
+  if (active) return active;
+
+  const q = queues.get(guildId);
+  if (!q?.lastTrack) return null;
+  return {
+    nowPlaying: q.lastTrack,
+    lastTrack: q.lastTrack,
+    tracks: [],
+    queued: 0,
+    historyCount: q.history.length,
+    volume: q.volume,
+    loop: q.loop,
+    paused: false,
+    elapsedSeconds: q.lastTrack.duration ?? 0,
+    channelId: q.connection?.joinConfig?.channelId ?? null,
+    ended: true,
   };
 }

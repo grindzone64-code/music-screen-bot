@@ -12,7 +12,7 @@ Discord music bot with slash commands (`discord.js` + `@discordjs/voice` + `yt-d
 ## Setup
 
 1. `npm install`
-2. Copy `.env.example` to `.env` and set `DISCORD_TOKEN`
+2. Copy `.env.example` to `.env` and set `DISCORD_TOKEN` (and optionally `YOUTUBE_COOKIES` if hosting on a cloud provider like Railway where YouTube blocks server IPs)
 3. Invite the bot to your server with `bot` and `applications.commands` scopes
 4. `npm start`
 5. In a voice channel, run `/play <query>`
