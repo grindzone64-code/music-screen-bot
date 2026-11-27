@@ -85,6 +85,23 @@ function normalizeCookies(raw) {
   return normalizeNetscapeText(text);
 }
 
+function writeNormalizedCookies(raw, label) {
+  const normalized = normalizeCookies(raw);
+  const entryCount = normalized
+    .split("\n")
+    .filter((l) => l.trim() && (!l.startsWith("#") || l.startsWith("#HttpOnly_"))).length;
+
+  if (entryCount === 0) {
+    console.warn(`[env] ${label} has no valid cookie entries — ignoring`);
+    return "";
+  }
+
+  const cookiePath = path.join(os.tmpdir(), "music-screen-bot-yt-cookies.txt");
+  fs.writeFileSync(cookiePath, normalized, { mode: 0o600 });
+  console.log(`[env] loaded ${entryCount} YouTube cookie entries from ${label}`);
+  return cookiePath;
+}
+
 function resolveCookiesFile() {
   const explicitPath = (process.env.YOUTUBE_COOKIES_FILE || process.env.YOUTUBE_COOKIES_PATH)?.trim();
   if (explicitPath && fs.existsSync(explicitPath)) {
@@ -92,26 +109,17 @@ function resolveCookiesFile() {
     return explicitPath;
   }
 
-  const raw = process.env.YOUTUBE_COOKIES;
-  if (!raw?.trim()) {
-    console.log("[env] YOUTUBE_COOKIES not set (SoundCloud fallback active if YouTube blocks IP)");
-    return "";
+  if (process.env.YOUTUBE_COOKIES?.trim()) {
+    return writeNormalizedCookies(process.env.YOUTUBE_COOKIES, "YOUTUBE_COOKIES");
   }
 
-  const normalized = normalizeCookies(raw);
-  const entryCount = normalized
-    .split("\n")
-    .filter((l) => l.trim() && (!l.startsWith("#") || l.startsWith("#HttpOnly_"))).length;
-
-  if (entryCount === 0) {
-    console.warn("[env] YOUTUBE_COOKIES set but no valid cookie entries found — ignoring");
-    return "";
+  const localCookies = path.resolve("cookies.txt");
+  if (fs.existsSync(localCookies)) {
+    return writeNormalizedCookies(fs.readFileSync(localCookies, "utf8"), "cookies.txt");
   }
 
-  const cookiePath = path.join(os.tmpdir(), "music-screen-bot-yt-cookies.txt");
-  fs.writeFileSync(cookiePath, normalized, { mode: 0o600 });
-  console.log(`[env] loaded ${entryCount} YouTube cookie entries`);
-  return cookiePath;
+  console.log("[env] YOUTUBE_COOKIES not set (SoundCloud fallback active if YouTube blocks IP)");
+  return "";
 }
 
 export const config = {
