@@ -33,6 +33,9 @@ const YT_FLAGS = {
   noCheckCertificates: true,
   noPlaylist: true,
   preferFreeFormats: true,
+  // Recent YouTube needs a JS runtime + solver script to expose audio formats.
+  jsRuntimes: "node",
+  remoteComponents: "ejs:github",
   referer: "https://www.youtube.com/",
   userAgent:
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
