@@ -315,6 +315,20 @@ const commandHandlers = {
 };
 
 async function handleButton(interaction) {
+  const guildId = interaction.guildId;
+  if (interaction.customId === "music:queue") {
+    const st = music.status(guildId);
+    if (!st) {
+      await interaction.reply({ content: "Queue is empty.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    await interaction.reply({
+      ...buildQueueMessage(st, 1),
+      flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
   const voiceChannel = await requireVoiceChannel(interaction);
   if (!voiceChannel) return;
 
@@ -328,7 +342,7 @@ async function handleButton(interaction) {
             .setCustomId("query")
             .setLabel("Song name or YouTube URL")
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder("e.g. kalyani slowed and reverb")
+            .setPlaceholder("e.g. Radhimaa")
             .setRequired(true),
         ),
       );
@@ -336,7 +350,6 @@ async function handleButton(interaction) {
     return;
   }
 
-  const guildId = interaction.guildId;
   switch (interaction.customId) {
     case "music:shuffle":
       music.shuffle(guildId);

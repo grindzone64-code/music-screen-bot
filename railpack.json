@@ -1,4 +1,4 @@
 {
   "$schema": "https://schema.railpack.com",
-  "deploy": { "aptPackages": ["python3"] }
+  "deploy": { "aptPackages": ["python3", "ffmpeg", "ca-certificates"] }
 }

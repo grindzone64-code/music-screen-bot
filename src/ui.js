@@ -49,13 +49,13 @@ export function buildPlayerMessage(snap) {
   const isEnded = snap.ended;
   const isPaused = snap.paused;
 
-  const statusBadge = isEnded ? "`Ended`" : isPaused ? "`Paused`" : "`Playing`";
-  const accentColor = isEnded ? 0x4e5058 : isPaused ? 0xf59e0b : 0x5865f2;
+  const statusBadge = isEnded ? "`■ Ended`" : isPaused ? "`⏸ Paused`" : "`ılı Playing`";
+  const accentColor = isEnded ? 0x4e5058 : isPaused ? 0xf59e0b : 0x0ea5e9;
 
-  const authorParts = [];
-  if (track.author) authorParts.push(track.author);
-  if (track.requestedBy) authorParts.push(`requested by <@${track.requestedBy}>`);
-  const subtitle = authorParts.length ? authorParts.join(" · ") : "YouTube";
+  const sourceName = track.author ?? (track.source === "soundcloud" ? "SoundCloud" : "YouTube");
+  const subtitle = track.requestedBy
+    ? `${sourceName} - requested by <@${track.requestedBy}>`
+    : sourceName;
 
   const safeTitle = track.title.length > 120 ? `${track.title.slice(0, 117)}...` : track.title;
   const headerLines = [
@@ -86,9 +86,9 @@ export function buildPlayerMessage(snap) {
     ? renderBar(isEnded ? track.duration : snap.elapsedSeconds, track.duration)
     : renderBar(1, 1);
 
-  const metaBits = [`\`${elapsedLabel} / ${totalLabel}\``];
+  const metaBits = [`**${elapsedLabel} / ${totalLabel}**`];
   if (snap.loop !== "off") metaBits.push(`Loop: **${snap.loop}**`);
-  if (snap.queued > 0) metaBits.push(`${snap.queued} in queue`);
+  if (snap.queued > 0) metaBits.push(`${snap.queued} queued`);
 
   container.addTextDisplayComponents(
     new TextDisplayBuilder().setContent(
@@ -104,6 +104,7 @@ export function buildPlayerMessage(snap) {
     new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small),
   );
 
+  // Row 1 (5 buttons): Shuffle | Previous | Pause/Resume | Skip | Replay
   const row1 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("music:shuffle")
@@ -125,8 +126,13 @@ export function buildPlayerMessage(snap) {
       .setEmoji("⏭️")
       .setStyle(ButtonStyle.Secondary)
       .setDisabled(isEnded),
+    new ButtonBuilder()
+      .setCustomId("music:replay")
+      .setEmoji("🔄")
+      .setStyle(ButtonStyle.Secondary),
   );
 
+  // Row 2 (4 buttons): Add | Loop | Queue | Stop
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder()
       .setCustomId("music:add")
@@ -138,9 +144,10 @@ export function buildPlayerMessage(snap) {
       .setStyle(snap.loop === "off" ? ButtonStyle.Secondary : ButtonStyle.Primary)
       .setDisabled(isEnded),
     new ButtonBuilder()
-      .setCustomId("music:replay")
-      .setEmoji("🔄")
-      .setStyle(ButtonStyle.Secondary),
+      .setCustomId("music:queue")
+      .setEmoji("📜")
+      .setStyle(ButtonStyle.Secondary)
+      .setDisabled(isEnded && snap.queued === 0),
     new ButtonBuilder()
       .setCustomId("music:stop")
       .setEmoji("⏹️")
@@ -181,7 +188,7 @@ export function buildQueueMessage(st, requestedPage = 1) {
   const upcoming = lines.length ? lines.join("\n") : "_No upcoming tracks_";
 
   const container = new ContainerBuilder()
-    .setAccentColor(0x5865f2)
+    .setAccentColor(0x0ea5e9)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         `### Music Queue\n**${st.paused ? "Paused" : "Now Playing"}:** ${fmtTrack(st.nowPlaying)}`,
@@ -204,7 +211,7 @@ export function buildQueueMessage(st, requestedPage = 1) {
 
 export function buildHelpMessage() {
   const container = new ContainerBuilder()
-    .setAccentColor(0x5865f2)
+    .setAccentColor(0x0ea5e9)
     .addTextDisplayComponents(
       new TextDisplayBuilder().setContent(
         [

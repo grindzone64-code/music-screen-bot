@@ -14,19 +14,21 @@ const queues = new Map();
 const MAX_HISTORY = 50;
 let stateListener = null;
 
-const YT_FLAGS = {
-  ...(config.ytCookiesFile ? { cookies: config.ytCookiesFile } : {}),
+const BASE_YT_FLAGS = {
   noWarnings: true,
   noCheckCertificates: true,
   noPlaylist: true,
-  preferFreeFormats: true,
-  // Recent YouTube needs a JS runtime + solver script to expose audio formats.
   jsRuntimes: "node",
   remoteComponents: "ejs:github",
-  referer: "https://www.youtube.com/",
-  userAgent:
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
 };
+
+function buildYtFlags({ useCookies = true, playerClient } = {}) {
+  return {
+    ...BASE_YT_FLAGS,
+    ...(useCookies && config.ytCookiesFile ? { cookies: config.ytCookiesFile } : {}),
+    ...(playerClient ? { extractorArgs: `youtube:player_client=${playerClient}` } : {}),
+  };
+}
 
 export function onStateChange(fn) {
   stateListener = fn;
@@ -114,14 +116,7 @@ function ensureConnection(guild, voiceChannel) {
   return connection;
 }
 
-async function resolveTrack(query, requestedBy) {
-  const target = /^https?:\/\//i.test(query) ? query : `ytsearch1:${query}`;
-  const raw = await youtubeDl(target, {
-    ...YT_FLAGS,
-    dumpSingleJson: true,
-    skipDownload: true,
-  });
-
+function parseTrackJson(raw, requestedBy, fallbackSource) {
   const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
   let info = parsed;
   if (info.entries?.length) info = info.entries[0];
@@ -133,8 +128,64 @@ async function resolveTrack(query, requestedBy) {
     url: info.webpage_url ?? info.original_url ?? info.url,
     duration: info.duration ?? 0,
     thumbnail: info.thumbnail ?? null,
+    source: info.extractor_key?.toLowerCase().includes("soundcloud") ? "soundcloud" : fallbackSource,
     requestedBy: requestedBy ?? null,
   };
+}
+
+function isBotOrCookieError(err) {
+  const msg = `${err?.stderr ?? ""} ${err?.message ?? ""}`.toLowerCase();
+  return (
+    msg.includes("sign in to confirm") ||
+    msg.includes("not a bot") ||
+    msg.includes("cookies") ||
+    msg.includes("http error 403") ||
+    msg.includes("429")
+  );
+}
+
+async function resolveWithTarget(target, flags) {
+  return youtubeDl(target, {
+    ...flags,
+    dumpSingleJson: true,
+    skipDownload: true,
+  });
+}
+
+async function resolveTrack(query, requestedBy) {
+  const isUrl = /^https?:\/\//i.test(query);
+  const ytTarget = isUrl ? query : `ytsearch1:${query}`;
+
+  try {
+    const raw = await resolveWithTarget(ytTarget, buildYtFlags({ useCookies: true }));
+    return parseTrackJson(raw, requestedBy, "youtube");
+  } catch (err) {
+    // If cookies were configured and failed (e.g. expired), retry without cookies using alternate YT client
+    if (config.ytCookiesFile && isBotOrCookieError(err)) {
+      console.warn("[music] YouTube failed with cookies, retrying without cookies...");
+      try {
+        const raw = await resolveWithTarget(
+          ytTarget,
+          buildYtFlags({ useCookies: false, playerClient: "tv_simply,android_vr" }),
+        );
+        return parseTrackJson(raw, requestedBy, "youtube");
+      } catch {}
+    }
+
+    // For search queries, fall back to SoundCloud (works on datacenter IPs without cookies)
+    if (!isUrl) {
+      console.warn(`[music] YouTube resolve failed (${err.message.split("\n")[0]}), falling back to SoundCloud`);
+      const raw = await resolveWithTarget(`scsearch1:${query}`, buildYtFlags({ useCookies: false }));
+      return parseTrackJson(raw, requestedBy, "soundcloud");
+    }
+
+    if (isBotOrCookieError(err)) {
+      throw new Error(
+        "YouTube blocked this server IP — add/refresh YOUTUBE_COOKIES, or search by song name to use SoundCloud.",
+      );
+    }
+    throw err;
+  }
 }
 
 function advance(guildId) {
@@ -166,10 +217,11 @@ function advance(guildId) {
     return;
   }
 
+  const streamFlags = buildYtFlags({ useCookies: nextTrack.source !== "soundcloud" });
   const child = youtubeDl.exec(nextTrack.url, {
-    ...YT_FLAGS,
+    ...streamFlags,
     output: "-",
-    format: "bestaudio/best",
+    format: "bestaudio[acodec=opus]/bestaudio/best",
     quiet: true,
   });
 
