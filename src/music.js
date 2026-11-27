@@ -174,6 +174,11 @@ function advance(guildId) {
   });
 
   child.on("error", (err) => console.error(`[music] yt-dlp: ${err.message}`));
+  // tinyspawn's child is also a promise; it rejects when we kill it (skip/stop).
+  child.catch((err) => {
+    if (err?.signalCode === "SIGTERM" || err?.killed) return;
+    console.error(`[music] yt-dlp exited: ${err?.exitCode ?? err?.message}`);
+  });
   child.stderr?.on("data", (d) => {
     const line = d.toString().trim();
     if (line) console.error(`[music] yt-dlp: ${line}`);
