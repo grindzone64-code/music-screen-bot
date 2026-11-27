@@ -10,7 +10,7 @@ import {
 import youtubeDl from "youtube-dl-exec";
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join as joinPath } from "node:path";
 
 const queues = new Map();
 const MAX_HISTORY = 50;
@@ -21,7 +21,7 @@ function resolveCookiesFile() {
   if (process.env.YOUTUBE_COOKIES_FILE) return process.env.YOUTUBE_COOKIES_FILE;
   const text = process.env.YOUTUBE_COOKIES;
   if (!text) return undefined;
-  const file = join(tmpdir(), "yt-cookies.txt");
+  const file = joinPath(tmpdir(), "yt-cookies.txt");
   writeFileSync(file, text.replace(/\\n/g, "\n"), { mode: 0o600 });
   return file;
 }
