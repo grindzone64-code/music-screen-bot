@@ -8,13 +8,28 @@ import {
   StreamType,
 } from "@discordjs/voice";
 import youtubeDl from "youtube-dl-exec";
+import { writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const queues = new Map();
 const MAX_HISTORY = 50;
 
+// YouTube blocks datacenter IPs unless requests carry cookies. Paste a Netscape-format
+// cookies.txt into the YOUTUBE_COOKIES variable (or point YOUTUBE_COOKIES_FILE at one).
+function resolveCookiesFile() {
+  if (process.env.YOUTUBE_COOKIES_FILE) return process.env.YOUTUBE_COOKIES_FILE;
+  const text = process.env.YOUTUBE_COOKIES;
+  if (!text) return undefined;
+  const file = join(tmpdir(), "yt-cookies.txt");
+  writeFileSync(file, text.replace(/\\n/g, "\n"), { mode: 0o600 });
+  return file;
+}
+const COOKIES_FILE = resolveCookiesFile();
+
 const YT_FLAGS = {
+  ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
   noWarnings: true,
-  noCallHome: true,
   noCheckCertificates: true,
   noPlaylist: true,
   preferFreeFormats: true,
