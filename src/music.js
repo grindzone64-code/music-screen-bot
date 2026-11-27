@@ -107,6 +107,12 @@ function ensureConnection(guild, voiceChannel) {
   connection.subscribe(q.player);
   q.connection = connection;
 
+  connection.on("error", (err) => {
+    console.error(`[music] voice connection error in ${guild.id}: ${err.message}`);
+    if (connection.state.status !== "destroyed") connection.destroy();
+    if (q.connection === connection) q.connection = null;
+  });
+
   connection.on("stateChange", (_, next) => {
     if (next.status === "disconnected") {
       console.warn(`[music] voice disconnected in ${guild.id}`);
